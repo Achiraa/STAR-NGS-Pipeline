@@ -1,0 +1,81 @@
+#!/bin/bash
+
+# Install required tools (This section is commented out since installation commands vary by system)
+# echo "Installing required tools..."
+# sudo apt-get update
+# sudo apt-get install -y sra-toolkit trimmomatic fastqc star subread
+
+# Create directories and navigate to the samples directory
+echo "Creating and navigating to samples directory..."
+mkdir -p ~/samples
+cd ~/samples
+
+# Prefetch the data
+echo "Prefetching data..."
+prefetch SRR8986990
+
+# Navigate to the data directory
+cd SRR8986990
+
+# Change permissions for the downloaded files
+chmod 777 SRR8986990.sra
+
+# Convert SRA to FASTQ
+echo "Converting SRA to FASTQ..."
+fastq-dump --split-3 SRR8986990.sra
+
+# Navigate back to the samples directory
+cd ..
+
+# Run FastQC on the FASTQ files
+echo "Running FastQC..."
+fastqc SRR8986990_1.fastq SRR8986990_2.fastq
+
+# Trimming using Trimmomatic
+echo "Trimming reads with Trimmomatic..."
+java -jar ~/trimmomatic-0.39.jar PE \
+  SRR8986990_1.fastq SRR8986990_2.fastq \
+  SRR8986990_1_trimmed_paired.fastq SRR8986990_1_trimmed_unpaired.fastq \
+  SRR8986990_2_trimmed_paired.fastq SRR8986990_2_trimmed_unpaired.fastq \
+  TRAILING:2 SLIDINGWINDOW:4:15 MINLEN:36
+
+# Copy reference genome and GTF files to the index directory
+echo "Copying reference files..."
+mkdir -p ~/samples/index
+cp /mnt/c/Users/achir/Downloads/Ecoli.fasta ~/samples/index/
+cp /mnt/c/Users/achir/Downloads/genomic_2.gtf ~/samples/index/
+
+# Run STAR for mapping
+echo "Mapping reads with STAR..."
+STAR --runThreadN 8 \
+  --readFilesIn SRR8986990_1_trimmed_paired.fastq SRR8986990_2_trimmed_paired.fastq \
+  --genomeDir ~/samples/index \
+  --outSAMtype BAM SortedByCoordinate \
+  --outFileNamePrefix ~/samples/mapping
+
+# Set up Conda environment for featureCounts
+echo "Setting up Conda environment..."
+mkdir -p ~/miniconda3
+bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
+rm -rf ~/miniconda3/miniconda.sh
+~/miniconda3/bin/conda init bash
+source ~/.bashrc
+
+echo "Creating and activating Conda environment..."
+conda create -n bioinfo python=3.8 -y
+conda activate bioinfo
+conda install -c bioconda subread -y
+
+# Run featureCounts
+echo "Running featureCounts..."
+featureCounts -a ~/samples/index/genomic_2.gtf -o ~/samples/counts_file.txt ~/samples/mappingAligned.sortedByCoord.out.bam
+
+# Deactivate Conda environment
+echo "Deactivating Conda environment..."
+conda deactivate
+
+# Print the head of the counts file
+echo "Output of the counts file:"
+head ~/samples/counts_file.txt
+
+echo "Pipeline completed."
